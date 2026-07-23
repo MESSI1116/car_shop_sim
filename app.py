@@ -78,6 +78,20 @@ default_segment_threshold_coef = {
     "超R": 0.70,
 }
 
+default_segment_sigma_coef = {
+    "小R": 0.15,
+    "中R": 0.25,
+    "大R": 0.40,
+    "超R": 0.60,
+}
+
+default_segment_hesitation_coef = {
+    "小R": 0.20,
+    "中R": 0.10,
+    "大R": 0.05,
+    "超R": 0.00,
+}
+
 default_tier_waiting_penalty_strength = {
     "T1": 0.20,
     "T2": 0.40,
@@ -106,6 +120,10 @@ def allocate_counts(total_count, weights_dict, ordered_keys):
         k: int(v)
         for k, v in zip(ordered_keys, base)
     }
+
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-np.clip(x, -60, 60)))
 
 
 # =========================
@@ -212,19 +230,40 @@ threshold_gamma = st.sidebar.slider(
     step=0.05
 )
 
-st.sidebar.header("玩家层级阈值系数")
+st.sidebar.header("玩家层级阈值 / Sigmoid 参数")
 
 segment_threshold_coef = {}
+segment_sigma_coef = {}
+segment_hesitation_coef = {}
 
 for seg in segments:
-    segment_threshold_coef[seg] = st.sidebar.number_input(
-        f"{seg} 购买阈值系数",
-        min_value=0.0,
-        max_value=10.0,
-        value=default_segment_threshold_coef[seg],
-        step=0.05,
-        key=f"{seg}_threshold_coef"
-    )
+    with st.sidebar.expander(f"{seg} 参数", expanded=False):
+        segment_threshold_coef[seg] = st.number_input(
+            f"{seg} 购买阈值系数",
+            min_value=0.0,
+            max_value=10.0,
+            value=default_segment_threshold_coef[seg],
+            step=0.05,
+            key=f"{seg}_threshold_coef"
+        )
+
+        segment_sigma_coef[seg] = st.number_input(
+            f"{seg} σ系数（价格敏感温度）",
+            min_value=0.01,
+            max_value=5.0,
+            value=default_segment_sigma_coef[seg],
+            step=0.01,
+            key=f"{seg}_sigma_coef"
+        )
+
+        segment_hesitation_coef[seg] = st.number_input(
+            f"{seg} 犹豫成本系数",
+            min_value=0.0,
+            max_value=5.0,
+            value=default_segment_hesitation_coef[seg],
+            step=0.01,
+            key=f"{seg}_hesitation_coef"
+        )
 
 st.sidebar.header("刷新心理参数")
 
@@ -331,20 +370,15 @@ tier_refresh_prob = {
     for tier in tiers
 }
 
-# 高价值车默认 T1 + T2
 high_value_prob = tier_refresh_prob["T1"] + tier_refresh_prob["T2"]
 
-# 单周期至少刷到一辆高价值车的概率
 p_high_cycle = 1 - (1 - high_value_prob) ** cars_per_cycle
 
-# 未来K天内刷到高价值车的概率
 future_cycle_count = future_window_days / cycle_days
 future_high_value_prob = 1 - (1 - p_high_cycle) ** future_cycle_count
 
-# 多车选择稀释：刷车越多，单车吸引力越被稀释
 choice_dilution_factor = 1 / (1 + choice_dilution_strength * (cars_per_cycle - 1))
 
-# 错失焦虑：周期越长越高，但会被刷车数稀释
 fomo_factor = 1 + (
     fomo_sensitivity
     * np.log(1 + cycle_days)
@@ -352,7 +386,6 @@ fomo_factor = 1 + (
     / np.sqrt(cars_per_cycle)
 )
 
-# 等待惩罚
 tier_waiting_penalty_factor = {}
 
 for tier in tiers:
@@ -363,7 +396,6 @@ for tier in tiers:
     )
     tier_waiting_penalty_factor[tier] = max(waiting_penalty_floor, raw_penalty)
 
-# 最终吸引力
 tier_final_attractiveness = {
     tier: (
         tier_attractiveness[tier]
@@ -374,10 +406,8 @@ tier_final_attractiveness = {
     for tier in tiers
 }
 
-# 玩家分层人数
 segment_player_counts = allocate_counts(players, segment_weights, segments)
 
-# 付费能力系数
 small_r_avg_pay = segment_avg_total_pay["小R"]
 
 segment_ability_coef = {
@@ -405,6 +435,16 @@ segment_fund_cap = {
     for seg in segments
 }
 
+segment_sigma = {
+    seg: price * segment_sigma_coef[seg]
+    for seg in segments
+}
+
+segment_hesitation_cost = {
+    seg: price * segment_hesitation_coef[seg]
+    for seg in segments
+}
+
 
 # =========================
 # 公式展示
@@ -417,11 +457,7 @@ st.markdown("""
 
 玩家数 = 当前刷新周期 n 天内，去重登录的小R及以上玩家数。
 
-### 2. 玩家分层
-
-小R / 中R / 大R / 超R 按最近30天去重登录玩家比例分配。
-
-### 3. 玩家资金池
+### 2. 玩家资金池
 
 付费能力系数 = (该层级平均累计付费 / 小R平均累计付费) ^ α
 
@@ -433,52 +469,37 @@ st.markdown("""
 
 资金上限 = 固定周期预算 × 资金上限倍数
 
-### 4. 档位刷新概率
-
-某档位实际刷新概率 = 该档位刷新权重 / 所有档位刷新权重之和
-
-### 5. 等待更好车预期
-
-高价值车概率 = T1刷新概率 + T2刷新概率
-
-单周期刷到高价值车概率 = 1 - (1 - 高价值车概率) ^ 每周期刷车数
-
-未来K天刷到高价值车概率 = 1 - (1 - 单周期刷到高价值车概率) ^ (K / 刷新周期)
-
-### 6. 多车选择稀释
-
-选择稀释系数 = 1 / (1 + 稀释强度 × (每周期刷车数 - 1))
-
-### 7. 错失焦虑系数
-
-错失焦虑系数 = 1 + 错失焦虑敏感度 × log(1 + 刷新周期) / log(11) / sqrt(每周期刷车数)
-
-### 8. 等待惩罚系数
-
-等待惩罚系数 = max(等待惩罚下限, 1 - 等待敏感度 × 未来K天刷到高价值车概率 × 档位等待惩罚强度)
-
-### 9. 车辆最终吸引力
+### 3. 车辆最终吸引力
 
 车辆最终吸引力 = 档位基础吸引力 × 选择稀释系数 × 错失焦虑系数 × 等待惩罚系数
 
-### 10. 购买阈值
+### 4. 心理购买阈值
 
 心理购买阈值 = 单车价格 × 玩家层级阈值系数 / (车辆最终吸引力 ^ γ)
 
-实际购买所需资金 = max(单车价格, 心理购买阈值)
+### 5. Sigmoid购买概率
 
-### 11. 多车竞争购买逻辑
+资金差值 = 当前资金 - 心理购买阈值 - 犹豫成本
+
+σ = 单车价格 × 层级σ系数
+
+购买概率 = 1 / (1 + exp(-(资金差值 / σ)))
+
+如果当前资金 < 单车价格，则购买概率 = 0
+
+### 6. 多车竞争购买逻辑
 
 每个玩家每周期刷到多辆车后：
 
 1. 计算每辆车的最终吸引力
-2. 计算每辆车的购买所需资金
-3. 按吸引力从高到低排序
-4. 如果吸引力相同，则随机排序
-5. 玩家优先购买吸引力最高且资金足够的车
-6. 购买后扣除单车价格
-7. 同一玩家同周期不会重复购买同一辆车
-8. 再判断剩余资金是否足够购买下一辆车
+2. 计算每辆车的心理购买阈值
+3. 计算每辆车的购买概率
+4. 按吸引力从高到低尝试购买
+5. 如果吸引力相同，则随机排序
+6. 按Sigmoid概率决定是否购买
+7. 购买后扣除单车价格
+8. 同一玩家同周期不会重复购买同一辆车
+9. 再判断剩余资金是否足够购买下一辆车
 """)
 
 
@@ -525,6 +546,10 @@ for seg in segments:
         "初始资金": segment_initial_fund[seg],
         "资金上限": segment_fund_cap[seg],
         "购买阈值系数": segment_threshold_coef[seg],
+        "σ系数": segment_sigma_coef[seg],
+        "σ实际值": segment_sigma[seg],
+        "犹豫成本系数": segment_hesitation_coef[seg],
+        "犹豫成本": segment_hesitation_cost[seg],
     })
 
 segment_summary_df = pd.DataFrame(segment_summary)
@@ -540,6 +565,10 @@ for col in [
     "初始资金",
     "资金上限",
     "购买阈值系数",
+    "σ系数",
+    "σ实际值",
+    "犹豫成本系数",
+    "犹豫成本",
 ]:
     display_segment_summary[col] = display_segment_summary[col].map(lambda x: f"{x:,.2f}")
 
@@ -708,7 +737,16 @@ if run:
                 / np.power(np.maximum(attractiveness_matrix, 1e-9), threshold_gamma)
             )
 
-            required_funds = np.maximum(price, psychological_threshold)
+           
+
+            hesitation_cost = segment_hesitation_cost[seg]
+            sigma = max(segment_sigma[seg], 1e-9)
+
+            purchase_score = (funds[:, None] - psychological_threshold - hesitation_cost) / sigma
+            purchase_prob = sigmoid(purchase_score)
+
+            # 如果当前资金连单车价格都不够，购买概率直接为0
+            
 
             tie_noise = rng.random(size=attractiveness_matrix.shape) * 1e-6
             purchase_order = np.argsort(
@@ -729,7 +767,7 @@ if run:
                 col_index = purchase_order[:, rank]
 
                 candidate_car_ids = car_ids[row_index, col_index]
-                candidate_required_funds = required_funds[row_index, col_index]
+                candidate_purchase_prob = purchase_prob[row_index, col_index]
 
                 if rank > 0:
                     already_bought_same_car = (
@@ -738,7 +776,14 @@ if run:
                 else:
                     already_bought_same_car = np.zeros(player_count, dtype=bool)
 
-                can_buy = (funds >= candidate_required_funds) & (~already_bought_same_car)
+                
+                random_roll = rng.random(player_count)
+
+                can_buy = (
+                    
+                     (~already_bought_same_car)
+                    & (random_roll < candidate_purchase_prob)
+                )
 
                 if np.any(can_buy):
                     bought_car_ids = candidate_car_ids[can_buy]
