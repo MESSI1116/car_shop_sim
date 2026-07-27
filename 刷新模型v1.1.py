@@ -71,18 +71,33 @@ default_attractiveness = {
     "T5": 0.3,
 }
 
-default_segment_threshold_coef = {
-    "小R": 1.20,
-    "中R": 1.00,
-    "大R": 0.85,
-    "超R": 0.70,
+default_tier_waiting_penalty_strength = {
+    "T1": 0.20,
+    "T2": 0.40,
+    "T3": 0.70,
+    "T4": 1.00,
+    "T5": 1.20,
 }
 
-default_segment_sigma_coef = {
+default_segment_value_coef = {
+    "小R": 1.0,
+    "中R": 1.4,
+    "大R": 2.0,
+    "超R": 3.0,
+}
+
+default_segment_price_sigma_coef = {
     "小R": 0.15,
     "中R": 0.25,
     "大R": 0.40,
     "超R": 0.60,
+}
+
+default_segment_fund_sigma_coef = {
+    "小R": 0.20,
+    "中R": 0.35,
+    "大R": 0.60,
+    "超R": 1.00,
 }
 
 default_segment_hesitation_coef = {
@@ -90,14 +105,6 @@ default_segment_hesitation_coef = {
     "中R": 0.10,
     "大R": 0.05,
     "超R": 0.00,
-}
-
-default_tier_waiting_penalty_strength = {
-    "T1": 0.20,
-    "T2": 0.40,
-    "T3": 0.70,
-    "T4": 1.00,
-    "T5": 1.20,
 }
 
 
@@ -214,46 +221,51 @@ initial_fund_ratio = st.sidebar.slider(
     step=0.05
 )
 
-fund_cap_multiplier = st.sidebar.slider(
-    "资金上限倍数",
-    min_value=0.1,
-    max_value=5.0,
-    value=1.50,
-    step=0.05
+allow_negative_funds = st.sidebar.checkbox(
+    "允许资金为负",
+    value=True
 )
 
-threshold_gamma = st.sidebar.slider(
-    "吸引力影响阈值指数 γ",
-    min_value=0.1,
-    max_value=3.0,
-    value=0.80,
-    step=0.05
+st.sidebar.header("双Sigmoid参数")
+
+base_psychological_value = st.sidebar.number_input(
+    "基准心理价位",
+    min_value=0.0,
+    value=68.0
 )
 
-st.sidebar.header("玩家层级阈值 / Sigmoid 参数")
-
-segment_threshold_coef = {}
-segment_sigma_coef = {}
+segment_value_coef = {}
+segment_price_sigma_coef = {}
+segment_fund_sigma_coef = {}
 segment_hesitation_coef = {}
 
 for seg in segments:
     with st.sidebar.expander(f"{seg} 参数", expanded=False):
-        segment_threshold_coef[seg] = st.number_input(
-            f"{seg} 购买阈值系数",
+        segment_value_coef[seg] = st.number_input(
+            f"{seg} 心理价值系数",
             min_value=0.0,
-            max_value=10.0,
-            value=default_segment_threshold_coef[seg],
+            max_value=20.0,
+            value=default_segment_value_coef[seg],
             step=0.05,
-            key=f"{seg}_threshold_coef"
+            key=f"{seg}_value_coef"
         )
 
-        segment_sigma_coef[seg] = st.number_input(
-            f"{seg} σ系数（价格敏感温度）",
+        segment_price_sigma_coef[seg] = st.number_input(
+            f"{seg} 价格σ系数",
             min_value=0.01,
-            max_value=5.0,
-            value=default_segment_sigma_coef[seg],
+            max_value=10.0,
+            value=default_segment_price_sigma_coef[seg],
             step=0.01,
-            key=f"{seg}_sigma_coef"
+            key=f"{seg}_price_sigma_coef"
+        )
+
+        segment_fund_sigma_coef[seg] = st.number_input(
+            f"{seg} 资金σ系数",
+            min_value=0.01,
+            max_value=10.0,
+            value=default_segment_fund_sigma_coef[seg],
+            step=0.01,
+            key=f"{seg}_fund_sigma_coef"
         )
 
         segment_hesitation_coef[seg] = st.number_input(
@@ -430,13 +442,13 @@ segment_initial_fund = {
     for seg in segments
 }
 
-segment_fund_cap = {
-    seg: segment_budget_per_period[seg] * fund_cap_multiplier
+segment_price_sigma = {
+    seg: price * segment_price_sigma_coef[seg]
     for seg in segments
 }
 
-segment_sigma = {
-    seg: price * segment_sigma_coef[seg]
+segment_fund_sigma = {
+    seg: price * segment_fund_sigma_coef[seg]
     for seg in segments
 }
 
@@ -453,54 +465,42 @@ segment_hesitation_cost = {
 st.subheader("模型内部公式")
 
 st.markdown("""
-### 1. 玩家数
+### 1. 玩家资金
 
-玩家数 = 当前刷新周期 n 天内，去重登录的小R及以上玩家数。
+资金每天增长，不是在周期第一天一次性发放。
 
-### 2. 玩家资金池
+每个玩家在刷新周期内随机一天打开商店，打开当天根据当前资金判断购买。
 
-付费能力系数 = (该层级平均累计付费 / 小R平均累计付费) ^ α
-
-固定周期预算 = 小R固定周期预算 × 付费能力系数
-
-每日新增资金 = 固定周期预算 / 固定周期天数
-
-### 3. 玩家打开商店时机
-
-每个玩家在每个刷新周期内随机一天打开商店。
-
-打开当天资金 = min(周期初资金 + 每日新增资金 × 打开日序号, 资金上限)
-
-周期结束资金 = min(购买后资金 + 每日新增资金 × 打开后剩余天数, 资金上限)
-
-### 4. 车辆最终吸引力
+### 2. 车辆最终吸引力
 
 车辆最终吸引力 = 档位基础吸引力 × 选择稀释系数 × 错失焦虑系数 × 等待惩罚系数
 
-### 5. 心理购买阈值
+### 3. 心理价位
 
-心理购买阈值 = 单车价格 × 玩家层级阈值系数 / (车辆最终吸引力 ^ γ)
+心理价位 = 基准心理价位 × 车辆最终吸引力 × 玩家层级心理价值系数
 
-### 6. Sigmoid购买概率
+### 4. 价格接受概率
 
-资金差值 = 当前资金 - 心理购买阈值 - 犹豫成本
+价格接受概率 = sigmoid((心理价位 - 实际价格) / 价格σ)
 
-σ = 单车价格 × 层级σ系数
+### 5. 资金承受概率
 
-购买概率 = 1 / (1 + exp(-(资金差值 / σ)))
+资金承受概率 = sigmoid((当前资金 - 实际价格 - 犹豫成本) / 资金σ)
 
-如果当前资金 < 单车价格，则购买概率 = 0
+### 6. 最终购买概率
 
-### 7. 多车竞争购买逻辑
+最终购买概率 = 价格接受概率 × 资金承受概率
 
-1. 玩家在周期内随机一天打开商店
-2. 打开当天结算当前资金
-3. 按车辆吸引力从高到低尝试购买
-4. 用Sigmoid概率判断是否购买
-5. 买一辆车后扣除单车价格
-6. 再用剩余资金判断下一辆车
-7. 同一玩家同周期不会重复购买同一辆车
-8. 周期结束结算打开后剩余天数的资金增长
+### 7. 多车竞争逻辑
+
+玩家每周期刷到多辆车后：
+
+1. 按车辆吸引力从高到低尝试购买
+2. 吸引力相同则随机排序
+3. 根据双Sigmoid概率判断是否购买
+4. 购买后扣除单车价格
+5. 同一玩家同周期不会重复购买同一辆车
+6. 周期结束结算打开后剩余天数的资金增长
 """)
 
 
@@ -545,10 +545,11 @@ for seg in segments:
         "固定周期车辆预算": segment_budget_per_period[seg],
         "每日新增资金": segment_daily_income[seg],
         "初始资金": segment_initial_fund[seg],
-        "资金上限": segment_fund_cap[seg],
-        "购买阈值系数": segment_threshold_coef[seg],
-        "σ系数": segment_sigma_coef[seg],
-        "σ实际值": segment_sigma[seg],
+        "心理价值系数": segment_value_coef[seg],
+        "价格σ系数": segment_price_sigma_coef[seg],
+        "价格σ实际值": segment_price_sigma[seg],
+        "资金σ系数": segment_fund_sigma_coef[seg],
+        "资金σ实际值": segment_fund_sigma[seg],
         "犹豫成本系数": segment_hesitation_coef[seg],
         "犹豫成本": segment_hesitation_cost[seg],
     })
@@ -564,10 +565,11 @@ for col in [
     "固定周期车辆预算",
     "每日新增资金",
     "初始资金",
-    "资金上限",
-    "购买阈值系数",
-    "σ系数",
-    "σ实际值",
+    "心理价值系数",
+    "价格σ系数",
+    "价格σ实际值",
+    "资金σ系数",
+    "资金σ实际值",
     "犹豫成本系数",
     "犹豫成本",
 ]:
@@ -623,8 +625,8 @@ param_df = pd.DataFrame([
     {"参数": "小R固定周期车辆预算", "数值": small_r_budget_per_period},
     {"参数": "付费能力压缩指数α", "数值": ability_alpha},
     {"参数": "初始资金比例", "数值": initial_fund_ratio},
-    {"参数": "资金上限倍数", "数值": fund_cap_multiplier},
-    {"参数": "吸引力影响阈值指数γ", "数值": threshold_gamma},
+    {"参数": "允许资金为负", "数值": allow_negative_funds},
+    {"参数": "基准心理价位", "数值": base_psychological_value},
 ])
 
 st.dataframe(param_df, use_container_width=True)
@@ -669,8 +671,6 @@ if run:
         high = base_initial * 1.5
 
         funds = rng.uniform(low=low, high=high, size=count)
-        funds = np.minimum(funds, segment_fund_cap[seg])
-
         player_funds[seg] = funds
 
     cycle_records = []
@@ -697,11 +697,7 @@ if run:
                 size=player_count
             )
 
-            funds_at_open = np.minimum(
-                funds_start_cycle + segment_daily_income[seg] * open_day,
-                segment_fund_cap[seg]
-            )
-
+            funds_at_open = funds_start_cycle + segment_daily_income[seg] * open_day
             funds = funds_at_open.copy()
 
             tier_indices = rng.choice(
@@ -738,16 +734,17 @@ if run:
 
             attractiveness_matrix = tier_attr_array[tier_indices]
 
-            threshold_coef = segment_threshold_coef[seg]
-
-            psychological_threshold = (
-                price
-                * threshold_coef
-                / np.power(np.maximum(attractiveness_matrix, 1e-9), threshold_gamma)
+            psychological_value = (
+                base_psychological_value
+                * attractiveness_matrix
+                * segment_value_coef[seg]
             )
 
+            price_sigma = max(segment_price_sigma[seg], 1e-9)
+            fund_sigma = max(segment_fund_sigma[seg], 1e-9)
             hesitation_cost = segment_hesitation_cost[seg]
-            sigma = max(segment_sigma[seg], 1e-9)
+
+            price_accept_prob = sigmoid((psychological_value - price) / price_sigma)
 
             tie_noise = rng.random(size=attractiveness_matrix.shape) * 1e-6
             purchase_order = np.argsort(
@@ -768,10 +765,16 @@ if run:
                 col_index = purchase_order[:, rank]
 
                 candidate_car_ids = car_ids[row_index, col_index]
-                candidate_threshold = psychological_threshold[row_index, col_index]
+                candidate_price_accept_prob = price_accept_prob[row_index, col_index]
 
-                purchase_score = (funds - candidate_threshold - hesitation_cost) / sigma
-                candidate_purchase_prob = sigmoid(purchase_score)
+                fund_accept_prob = sigmoid(
+                    (funds - price - hesitation_cost) / fund_sigma
+                )
+
+                candidate_purchase_prob = candidate_price_accept_prob * fund_accept_prob
+
+                if not allow_negative_funds:
+                    candidate_purchase_prob = np.where(funds >= price, candidate_purchase_prob, 0)
 
                 if rank > 0:
                     already_bought_same_car = (
@@ -783,8 +786,7 @@ if run:
                 random_roll = rng.random(player_count)
 
                 can_buy = (
-                    (funds >= price)
-                    & (~already_bought_same_car)
+                    (~already_bought_same_car)
                     & (random_roll < candidate_purchase_prob)
                 )
 
@@ -797,11 +799,7 @@ if run:
 
             remaining_days_after_open = cycle_days - open_day
 
-            funds_end_cycle = np.minimum(
-                funds + segment_daily_income[seg] * remaining_days_after_open,
-                segment_fund_cap[seg]
-            )
-
+            funds_end_cycle = funds + segment_daily_income[seg] * remaining_days_after_open
             player_funds[seg] = funds_end_cycle
 
             sales_by_tier = np.zeros(len(tiers), dtype=np.int64)
