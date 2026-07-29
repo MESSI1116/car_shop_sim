@@ -25,13 +25,14 @@ player_lookup = {
 }
 
 tiers = ["T1", "T2", "T3", "T4", "T5"]
-segments = ["小R", "中R", "大R", "超R"]
+segments = ["小R", "中R", "大R", "超R","巨R"]
 
 segment_active_counts = {
-    "小R": 582662,
-    "中R": 17500,
-    "大R": 16721,
-    "超R": 4427,
+    "小R": 347908,
+    "中R": 38218,
+    "大R": 14636,
+    "超R": 4959,
+    "巨R": 1754,
 }
 
 segment_total = sum(segment_active_counts.values())
@@ -41,10 +42,11 @@ segment_weights = {
 }
 
 segment_avg_total_pay = {
-    "小R": 452.72,
-    "中R": 6976.33,
-    "大R": 20725.47,
-    "超R": 116757.12,
+    "小R": 16.47,
+    "中R": 152.08,
+    "大R": 543.67,
+    "超R": 1643.06,
+    "巨R": 4700.08,
 }
 
 default_car_count = {
@@ -81,30 +83,34 @@ default_tier_waiting_penalty_strength = {
 
 default_segment_value_coef = {
     "小R": 1.0,
-    "中R": 1.4,
-    "大R": 2.0,
-    "超R": 3.0,
+    "中R": 1.3,
+    "大R": 1.8,
+    "超R": 2.5,
+    "巨R": 3.8,
 }
 
 default_segment_price_sigma_coef = {
     "小R": 0.15,
     "中R": 0.25,
-    "大R": 0.40,
-    "超R": 0.60,
+    "大R": 0.45,
+    "超R": 0.80,
+    "巨R": 1.30,
 }
 
 default_segment_fund_sigma_coef = {
     "小R": 0.20,
     "中R": 0.35,
-    "大R": 0.60,
-    "超R": 1.00,
+    "大R": 0.75,
+    "超R": 1.30,
+    "巨R": 2.20,
 }
 
 default_segment_hesitation_coef = {
-    "小R": 0.20,
-    "中R": 0.10,
-    "大R": 0.05,
+    "小R": 0.00,
+    "中R": 0.00,
+    "大R": 0.00,
     "超R": 0.00,
+    "巨R": 0.00,
 }
 
 
@@ -946,6 +952,9 @@ if run:
 
     segment_total_df["daily_avg_sales"] = segment_total_df["sales"] / total_days
     segment_total_df["daily_avg_revenue"] = segment_total_df["revenue"] / total_days
+    segment_total_df["daily_avg_revenue_eachperson"] = (
+    segment_total_df["revenue"] / segment_total_df["players"] / total_days
+)
     segment_total_df["conversion_rate"] = (
         segment_total_df["sales"]
         / segment_total_df["exposure"].replace(0, np.nan)
