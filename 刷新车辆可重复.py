@@ -4,8 +4,8 @@ import pandas as pd
 import altair as alt
 
 st.set_page_config(page_title="每日车辆商店销量模拟器", layout="wide")
-
 st.title("每日车辆商店销量模拟器")
+
 
 # =========================
 # 基础数据
@@ -25,7 +25,7 @@ player_lookup = {
 }
 
 tiers = ["T1", "T2", "T3", "T4", "T5"]
-segments = ["小R", "中R", "大R", "超R","巨R"]
+segments = ["小R", "中R", "大R", "超R", "巨R"]
 
 segment_active_counts = {
     "小R": 347908,
@@ -50,59 +50,59 @@ segment_avg_total_pay = {
 }
 
 default_car_count = {
-    "T1": 5,
-    "T2": 15,
-    "T3": 35,
-    "T4": 30,
-    "T5": 15,
+    "T1": 10,
+    "T2": 10,
+    "T3": 10,
+    "T4": 10,
+    "T5": 10,
 }
 
 default_refresh_weight = {
-    "T1": 5.0,
-    "T2": 15.0,
-    "T3": 35.0,
-    "T4": 30.0,
-    "T5": 15.0,
+    "T1": 10.0,
+    "T2": 10.0,
+    "T3": 10.0,
+    "T4": 10.0,
+    "T5": 10.0,
 }
 
 default_attractiveness = {
-    "T1": 2.0,
-    "T2": 1.5,
-    "T3": 1.0,
-    "T4": 0.6,
-    "T5": 0.3,
+    "T1": 6.83,
+    "T2": 1.77,
+    "T3": 1.00,
+    "T4": 0.56,
+    "T5": 0.22,
 }
 
 default_tier_waiting_penalty_strength = {
-    "T1": 0.20,
-    "T2": 0.40,
-    "T3": 0.70,
-    "T4": 1.00,
-    "T5": 1.20,
+    "T1": 0.00,
+    "T2": 0.00,
+    "T3": 0.00,
+    "T4": 0.00,
+    "T5": 0.20,
 }
 
 default_segment_value_coef = {
-    "小R": 1.0,
-    "中R": 1.3,
-    "大R": 1.8,
-    "超R": 2.5,
-    "巨R": 3.8,
+    "小R": 1.13,
+    "中R": 1.25,
+    "大R": 2.50,
+    "超R": 3.20,
+    "巨R": 3.50,
 }
 
 default_segment_price_sigma_coef = {
-    "小R": 0.15,
-    "中R": 0.25,
-    "大R": 0.45,
-    "超R": 0.80,
-    "巨R": 1.30,
+    "小R": 0.10,
+    "中R": 0.10,
+    "大R": 0.20,
+    "超R": 0.46,
+    "巨R": 0.50,
 }
 
 default_segment_fund_sigma_coef = {
-    "小R": 0.20,
-    "中R": 0.35,
-    "大R": 0.75,
-    "超R": 1.30,
-    "巨R": 2.20,
+    "小R": 0.12,
+    "中R": 0.14,
+    "大R": 0.38,
+    "超R": 0.57,
+    "巨R": 0.80,
 }
 
 default_segment_hesitation_coef = {
@@ -140,6 +140,14 @@ def sigmoid(x):
 
 
 # =========================
+# session_state 初始化
+# =========================
+
+if "sim_results" not in st.session_state:
+    st.session_state["sim_results"] = None
+
+
+# =========================
 # 侧边栏参数
 # =========================
 
@@ -149,7 +157,7 @@ cycle_days = st.sidebar.slider(
     "刷新周期：每几天刷新一次",
     min_value=1,
     max_value=10,
-    value=7
+    value=10
 )
 
 players = player_lookup[cycle_days]
@@ -208,14 +216,14 @@ fixed_period_days = int(fixed_period_days)
 small_r_budget_per_period = st.sidebar.number_input(
     "小R每固定周期车辆预算",
     min_value=0.0,
-    value=68.0
+    value=0.45
 )
 
 ability_alpha = st.sidebar.slider(
     "付费能力压缩指数 α",
     min_value=0.0,
     max_value=1.0,
-    value=0.40,
+    value=1.00,
     step=0.01
 )
 
@@ -223,7 +231,7 @@ initial_fund_ratio = st.sidebar.slider(
     "初始资金比例",
     min_value=0.0,
     max_value=2.0,
-    value=0.50,
+    value=0.30,
     step=0.05
 )
 
@@ -237,7 +245,7 @@ st.sidebar.header("双Sigmoid参数")
 base_psychological_value = st.sidebar.number_input(
     "基准心理价位",
     min_value=0.0,
-    value=68.0
+    value=58.0
 )
 
 segment_value_coef = {}
@@ -706,6 +714,7 @@ if run:
             funds_at_open = funds_start_cycle + segment_daily_income[seg] * open_day
             funds = funds_at_open.copy()
 
+            # 旧逻辑：先抽档位，再抽该档位车辆；同一玩家同周期可能刷到重复车
             tier_indices = rng.choice(
                 len(tiers),
                 size=(player_count, cars_per_cycle),
@@ -881,27 +890,92 @@ if run:
     tier_df = pd.DataFrame(tier_records)
     car_result_df = pd.DataFrame(car_records)
 
-    total_exposure = cycle_df["exposure"].sum()
-    total_sales = cycle_df["sales"].sum()
-    total_revenue = cycle_df["revenue"].sum()
+    st.session_state["sim_results"] = {
+        "cycle_df": cycle_df,
+        "segment_df": segment_df,
+        "tier_df": tier_df,
+        "car_result_df": car_result_df,
+        "cycle_days": cycle_days,
+        "simulate_cycles": simulate_cycles,
+        "total_days": total_days,
+    }
+
+
+# =========================
+# 结果展示：从 session_state 读取
+# =========================
+
+if st.session_state["sim_results"] is not None:
+    sim_results = st.session_state["sim_results"]
+
+    cycle_df = sim_results["cycle_df"]
+    segment_df = sim_results["segment_df"]
+    tier_df = sim_results["tier_df"]
+    car_result_df = sim_results["car_result_df"]
+
+    result_cycle_days = sim_results["cycle_days"]
+    result_simulate_cycles = sim_results["simulate_cycles"]
+    result_total_days = sim_results["total_days"]
+
+    st.subheader("统计区间设置")
+
+    stat_start_cycle, stat_end_cycle = st.slider(
+        "选择用于累计统计的周期范围",
+        min_value=1,
+        max_value=result_simulate_cycles,
+        value=(1, result_simulate_cycles),
+        step=1
+    )
+
+    stat_cycles = stat_end_cycle - stat_start_cycle + 1
+    stat_days = stat_cycles * result_cycle_days
+
+    st.info(
+        f"当前累计统计范围：第 {stat_start_cycle} ~ 第 {stat_end_cycle} 周期，"
+        f"共 {stat_cycles} 个周期，折合 {stat_days} 天。"
+    )
+
+    cycle_df_stat = cycle_df[
+        (cycle_df["cycle"] >= stat_start_cycle)
+        & (cycle_df["cycle"] <= stat_end_cycle)
+    ].copy()
+
+    segment_df_stat = segment_df[
+        (segment_df["cycle"] >= stat_start_cycle)
+        & (segment_df["cycle"] <= stat_end_cycle)
+    ].copy()
+
+    tier_df_stat = tier_df[
+        (tier_df["cycle"] >= stat_start_cycle)
+        & (tier_df["cycle"] <= stat_end_cycle)
+    ].copy()
+
+    car_result_df_stat = car_result_df[
+        (car_result_df["cycle"] >= stat_start_cycle)
+        & (car_result_df["cycle"] <= stat_end_cycle)
+    ].copy()
+
+    total_exposure = cycle_df_stat["exposure"].sum()
+    total_sales = cycle_df_stat["sales"].sum()
+    total_revenue = cycle_df_stat["revenue"].sum()
 
     st.subheader("核心模拟结果")
 
     col1, col2, col3, col4 = st.columns(4)
 
-    col1.metric("总曝光次数", f"{int(total_exposure):,}")
-    col2.metric("总销量", f"{int(total_sales):,}")
-    col3.metric("总流水", f"{total_revenue:,.2f}")
-    col4.metric("日均流水", f"{total_revenue / total_days:,.2f}")
+    col1.metric("统计区间曝光次数", f"{int(total_exposure):,}")
+    col2.metric("统计区间销量", f"{int(total_sales):,}")
+    col3.metric("统计区间流水", f"{total_revenue:,.2f}")
+    col4.metric("统计区间日均流水", f"{total_revenue / stat_days:,.2f}")
 
     col5, col6, col7, col8 = st.columns(4)
 
-    col5.metric("单周期平均曝光", f"{cycle_df['exposure'].mean():,.2f}")
-    col6.metric("单周期平均销量", f"{cycle_df['sales'].mean():,.2f}")
-    col7.metric("单周期平均流水", f"{cycle_df['revenue'].mean():,.2f}")
-    col8.metric("日均销量", f"{total_sales / total_days:,.2f}")
+    col5.metric("统计区间单周期平均曝光", f"{cycle_df_stat['exposure'].mean():,.2f}")
+    col6.metric("统计区间单周期平均销量", f"{cycle_df_stat['sales'].mean():,.2f}")
+    col7.metric("统计区间单周期平均流水", f"{cycle_df_stat['revenue'].mean():,.2f}")
+    col8.metric("统计区间日均销量", f"{total_sales / stat_days:,.2f}")
 
-    st.subheader("周期结果")
+    st.subheader("周期结果（全量）")
     st.dataframe(cycle_df, use_container_width=True)
 
     cycle_sales_chart = alt.Chart(cycle_df).mark_line(point=True).encode(
@@ -917,7 +991,7 @@ if run:
             "daily_avg_sales",
             "daily_avg_revenue",
         ]
-    ).properties(title="各周期车辆销量")
+    ).properties(title="各周期车辆销量（全量）")
 
     st.altair_chart(cycle_sales_chart, use_container_width=True)
 
@@ -934,13 +1008,13 @@ if run:
             "daily_avg_sales",
             "daily_avg_revenue",
         ]
-    ).properties(title="各周期车辆流水")
+    ).properties(title="各周期车辆流水（全量）")
 
     st.altair_chart(cycle_revenue_chart, use_container_width=True)
 
-    st.subheader("玩家层级累计结果")
+    st.subheader("玩家层级累计结果（按所选周期范围统计）")
 
-    segment_total_df = segment_df.groupby("segment", as_index=False).agg(
+    segment_total_df = segment_df_stat.groupby("segment", as_index=False).agg(
         players=("players", "max"),
         avg_open_day=("avg_open_day", "mean"),
         exposure=("exposure", "sum"),
@@ -950,11 +1024,14 @@ if run:
         avg_remaining_funds=("avg_remaining_funds", "mean"),
     )
 
-    segment_total_df["daily_avg_sales"] = segment_total_df["sales"] / total_days
-    segment_total_df["daily_avg_revenue"] = segment_total_df["revenue"] / total_days
+    segment_total_df["daily_avg_sales"] = segment_total_df["sales"] / stat_days
+    segment_total_df["daily_avg_revenue"] = segment_total_df["revenue"] / stat_days
     segment_total_df["daily_avg_revenue_eachperson"] = (
-    segment_total_df["revenue"] / segment_total_df["players"] / total_days
-)
+        segment_total_df["revenue"] / segment_total_df["players"] / stat_days
+    )
+    segment_total_df["daily_avg_sales_eachperson"] = (
+        segment_total_df["sales"] / segment_total_df["players"] / stat_days
+    )
     segment_total_df["conversion_rate"] = (
         segment_total_df["sales"]
         / segment_total_df["exposure"].replace(0, np.nan)
@@ -979,23 +1056,25 @@ if run:
             "revenue",
             "daily_avg_sales",
             "daily_avg_revenue",
+            "daily_avg_sales_eachperson",
+            "daily_avg_revenue_eachperson",
             "avg_funds_at_open",
             "avg_remaining_funds",
         ]
-    ).properties(title="各玩家层级累计流水")
+    ).properties(title="各玩家层级累计流水（按所选周期范围统计）")
 
     st.altair_chart(segment_revenue_chart, use_container_width=True)
 
-    st.subheader("档位累计结果")
+    st.subheader("档位累计结果（按所选周期范围统计）")
 
-    tier_total_df = tier_df.groupby("tier", as_index=False).agg(
+    tier_total_df = tier_df_stat.groupby("tier", as_index=False).agg(
         exposure=("exposure", "sum"),
         sales=("sales", "sum"),
         revenue=("revenue", "sum"),
     )
 
-    tier_total_df["daily_avg_sales"] = tier_total_df["sales"] / total_days
-    tier_total_df["daily_avg_revenue"] = tier_total_df["revenue"] / total_days
+    tier_total_df["daily_avg_sales"] = tier_total_df["sales"] / stat_days
+    tier_total_df["daily_avg_revenue"] = tier_total_df["revenue"] / stat_days
     tier_total_df["conversion_rate"] = (
         tier_total_df["sales"]
         / tier_total_df["exposure"].replace(0, np.nan)
@@ -1019,21 +1098,21 @@ if run:
             "daily_avg_sales",
             "daily_avg_revenue",
         ]
-    ).properties(title="各档位累计销量")
+    ).properties(title="各档位累计销量（按所选周期范围统计）")
 
     st.altair_chart(tier_sales_chart, use_container_width=True)
 
-    st.subheader("车辆累计结果")
+    st.subheader("车辆累计结果（按所选周期范围统计）")
 
-    if len(car_result_df) > 0:
-        car_total_df = car_result_df.groupby(["car", "tier"], as_index=False).agg(
+    if len(car_result_df_stat) > 0:
+        car_total_df = car_result_df_stat.groupby(["car", "tier"], as_index=False).agg(
             exposure=("exposure", "sum"),
             sales=("sales", "sum"),
             revenue=("revenue", "sum"),
         ).sort_values("sales", ascending=False)
 
-        car_total_df["daily_avg_sales"] = car_total_df["sales"] / total_days
-        car_total_df["daily_avg_revenue"] = car_total_df["revenue"] / total_days
+        car_total_df["daily_avg_sales"] = car_total_df["sales"] / stat_days
+        car_total_df["daily_avg_revenue"] = car_total_df["revenue"] / stat_days
         car_total_df["conversion_rate"] = (
             car_total_df["sales"]
             / car_total_df["exposure"].replace(0, np.nan)
@@ -1059,27 +1138,30 @@ if run:
                 "daily_avg_sales",
                 "daily_avg_revenue",
             ]
-        ).properties(title="车辆累计销量 TOP 30")
+        ).properties(title="车辆累计销量 TOP 30（按所选周期范围统计）")
 
         st.altair_chart(car_sales_chart, use_container_width=True)
 
         st.download_button(
-            label="下载车辆结果 CSV",
+            label="下载车辆结果 CSV（所选周期范围）",
             data=car_total_df.to_csv(index=False).encode("utf-8-sig"),
-            file_name="car_shop_sim_car_result.csv",
+            file_name="car_shop_sim_car_result_selected_cycles.csv",
             mime="text/csv",
         )
 
     st.download_button(
-        label="下载周期结果 CSV",
+        label="下载周期结果 CSV（全量）",
         data=cycle_df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="car_shop_sim_cycle_result.csv",
+        file_name="car_shop_sim_cycle_result_all.csv",
         mime="text/csv",
     )
 
     st.download_button(
-        label="下载玩家层级结果 CSV",
+        label="下载玩家层级结果 CSV（所选周期范围）",
         data=segment_total_df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="car_shop_sim_segment_result.csv",
+        file_name="car_shop_sim_segment_result_selected_cycles.csv",
         mime="text/csv",
     )
+
+else:
+    st.info("请先在左侧设置参数，然后点击“开始模拟”。")
